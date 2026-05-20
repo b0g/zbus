@@ -76,6 +76,7 @@ type Interfaces<'a> = HashMap<ObjectPath<'a>, HashMap<InterfaceName<'static>, Ar
 pub struct Builder<'a> {
     target: Option<Target>,
     max_queued: Option<usize>,
+    overflow: Option<bool>,
     // This is only set for p2p server case or pre-authenticated sockets.
     guid: Option<Guid<'a>>,
     #[cfg(feature = "p2p")]
@@ -326,6 +327,40 @@ impl<'a> Builder<'a> {
         self
     }
 
+    /// Enable overflow mode on the message broadcast channels.
+    ///
+    /// When enabled and a channel is full, the oldest message is dropped to make room for the
+    /// newest one. This ensures the socket reader task is never blocked by a full channel.
+    ///
+    /// By default, `overflow` is disabled and a full channel will cause the socket reader task
+    /// to block, which in turn freezes the entire connection (no signals received, method call
+    /// responses timeout, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use std::error::Error;
+    /// # use zbus::connection::Builder;
+    /// # use zbus::block_on;
+    /// #
+    /// # block_on(async {
+    /// let conn = Builder::session()?
+    ///     .overflow(true)
+    ///     .build()
+    ///     .await?;
+    /// assert!(conn.overflow());
+    ///
+    /// #     Ok::<(), zbus::Error>(())
+    /// # }).unwrap();
+    /// #
+    /// // Do something useful with `conn`..
+    /// # Ok::<_, Box<dyn Error + Send + Sync>>(())
+    /// ```
+    pub fn overflow(mut self, overflow: bool) -> Self {
+        self.overflow = Some(overflow);
+        self
+    }
+
     /// Enable or disable the internal executor thread.
     ///
     /// The thread is enabled by default.
@@ -544,6 +579,7 @@ impl<'a> Builder<'a> {
 
         let mut conn = Connection::new(auth, is_bus_conn, executor, self.method_timeout).await?;
         conn.set_max_queued(self.max_queued.unwrap_or(DEFAULT_MAX_QUEUED));
+        conn.set_overflow(self.overflow.unwrap_or(false));
 
         if !self.interfaces.is_empty() {
             let object_server = conn.ensure_object_server(false);
@@ -591,6 +627,7 @@ impl<'a> Builder<'a> {
             #[cfg(feature = "p2p")]
             p2p: false,
             max_queued: None,
+            overflow: None,
             guid: None,
             internal_executor: true,
             interfaces: HashMap::new(),
